@@ -1,0 +1,160 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #0d0d0d;
+  font-family: monospace;
+}
+
+.root {
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+// Left
+.panel-left {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.pane-canvas {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #000;
+
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  &:fullscreen, &:-webkit-full-screen {
+    canvas { width: 100vw; height: 100vh; }
+  }
+}
+
+.drag-v {
+  height: 4px;
+  flex-shrink: 0;
+  cursor: row-resize;
+  background: #1a1a1a;
+
+  &:hover { background: #fff; }
+}
+
+.pane-errors {
+  height: 72px;
+  min-height: 24px;
+  flex-shrink: 0;
+  overflow: auto;
+  background: #0a0a0a;
+  border-top: 1px solid #1a1a1a;
+
+  .err-inner {
+    padding: 8px 12px;
+    font-size: 12px;
+    color: #f87171;
+    white-space: pre-wrap;
+  }
+
+  .no-err {
+    padding: 8px 12px;
+    font-size: 12px;
+    color: #555;
+  }
+}
+
+.drag-h {
+  width: 4px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: #1a1a1a;
+
+  &:hover { background: #fff; }
+}
+
+// Right
+.panel-right {
+  width: 420px;
+  min-width: 200px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: #111;
+  border-left: 1px solid #1a1a1a;
+}
+
+.bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #1a1a1a;
+
+  button {
+    background: transparent;
+    color: #aaa;
+    border: 1px solid #2a2a2a;
+    border-radius: 4px;
+    padding: 3px 12px;
+    font-size: 12px;
+    line-height: 1;
+    height: 24px;
+    font-family: monospace;
+    cursor: pointer;
+
+    &:hover  { color: #fff; border-color: #444; }
+    &:active { background: #1a1a1a; }
+  }
+}
+
+// Editor area: gutter + textarea side by side
+.editor-wrap {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.gutter {
+  width: 40px;
+  flex-shrink: 0;
+  overflow: hidden; // scroll is driven by textarea scroll event
+  background: #0e0e0e;
+  border-right: 1px solid #1a1a1a;
+  padding-top: 10px;
+  user-select: none;
+
+  .gutter-line {
+    height: 19.5px; // must match textarea line-height exactly, a little too hacky tho
+    line-height: 19.5px;
+    font-size: 12px;
+    color: #555;
+    text-align: right;
+    padding-right: 8px;
+  }
+}
+
+.code {
+  flex: 1 1 0;
+  min-width: 0;
+  resize: none;
+  background: transparent;
+  color: #d4d4d4;
+  font-size: 13px;
+  line-height: 1.5; // 13 * 1.5 = 19.5px — matches gutter-line height
+  padding: 10px 14px;
+  border: none;
+  outline: none;
+  tab-size: 4;
+  overflow: auto;
+}
