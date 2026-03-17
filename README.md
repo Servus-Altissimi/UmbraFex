@@ -20,7 +20,7 @@ Inspired by [ShaderToy](https://www.shadertoy.com/). Built with [Dioxus](https:/
 - Ships with a cute default pastel torus raymarcher to get you started 
 
 ## Requirements
-- A browser that supports WebGPU ([You may need to enable it](https://enablegpu.com/)
+- A browser that supports WebGPU ([You may need to enable it](https://enablegpu.com/))
 - Rust & Cargo
 - [Dioxus](https://dioxuslabs.com/)
 
