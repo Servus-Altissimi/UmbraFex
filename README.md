@@ -4,15 +4,17 @@
 
   [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
   [![Rust](https://img.shields.io/badge/rust-1.89+-orange.svg)](https://www.rust-lang.org/)
-  
-<img width="1870" height="916" alt="image" src="https://github.com/user-attachments/assets/03129092-2291-4d32-bb2d-ccb70d1f90f4" />
+
+[//]:<img width="1870" height="916" alt="image" src="https://github.com/user-attachments/assets/03129092-2291-4d32-bb2d-ccb70d1f90f4" />
+
+<img width="1868" height="918" alt="image" src="https://github.com/user-attachments/assets/521d4f75-0cb4-464b-8c53-db93fdeece58" />
 
 --- 
 
 Inspired by [ShaderToy](https://www.shadertoy.com/). Built with [Dioxus](https://dioxuslabs.com/) and [WGPU](https://wgpu.rs/), runs entirely in the browser via WebGPU.
 
 ## Features
-- Live WGSL shader editor
+- Live WGSL shader editor with highlighting
 - Real-time compilation errors
 - Uniforms for resolution and time passed automatically
 - Resizable editor and error pane via drag handles
