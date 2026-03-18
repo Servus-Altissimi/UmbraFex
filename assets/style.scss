@@ -144,17 +144,63 @@ html, body {
   }
 }
 
-.code {
+// editor-content stacks overlay + textarea in the same grid cell.
+.editor-content {
   flex: 1 1 0;
   min-width: 0;
+  display: grid;
+  overflow: hidden;
+}
+
+// Sits behind the transparent textarea, scroll slaved to .code.
+.highlight-overlay {
+  grid-area: 1 / 1;
+  overflow: hidden;
+  pointer-events: none;
+  padding: 10px 14px; // must match .code padding
+  font-size: 13px;
+  font-family: monospace;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  tab-size: 4;
+
+  // loosely inspired by VSCode Dark
+  .hl-comment { color: #5c6370; }
+  .hl-kw      { color: #c678dd; }
+  .hl-type    { color: #56b6c2; }
+  .hl-attr    { color: #e5c07b; }
+  .hl-num     { color: #d19a66; }
+  .hl-builtin { color: #61afef; }
+  .hl-ident   { color: #abb2bf; }
+
+  // 3-colour cycle by nesting depth, opener and closer share a colour
+  .hl-brace-0 { color: #e5c07b; }
+  .hl-brace-1 { color: #61afef; }
+  .hl-brace-2 { color: #e06c75; }
+  .hl-paren-0 { color: #e5c07b; }
+  .hl-paren-1 { color: #61afef; }
+  .hl-paren-2 { color: #e06c75; }
+  .hl-op      { color: #56b6c2; }
+
+  .hl-err-line {
+    background: rgba(255, 0, 0, 0.14);
+  }
+}
+
+.code {
+  grid-area: 1 / 1;
   resize: none;
   background: transparent;
-  color: #d4d4d4;
+  color: transparent; // overlay shows through
+  caret-color: #abb2bf;
   font-size: 13px;
-  line-height: 1.5; // 13 * 1.5 = 19.5px — matches gutter-line height
+  line-height: 1.5;
   padding: 10px 14px;
   border: none;
   outline: none;
   tab-size: 4;
   overflow: auto;
+  position: relative;
+  z-index: 1;
 }

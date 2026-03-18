@@ -488,6 +488,12 @@ fn classify_word(w: &str) -> &'static str {
     }
 }
 
+fn parse_err_lines(err: &str) -> Vec<usize> {
+    err.lines()
+        .filter_map(|l| l.strip_prefix("line ")?.split(':').next()?.trim().parse().ok())
+        .collect()
+}
+
 // Single-pass WGSL tokeniser; returns an HTML string safe for dangerous_inner_html.
 // It's a little amateur, but it does the job
 // Recognised token classes:
@@ -498,7 +504,7 @@ fn classify_word(w: &str) -> &'static str {
 //   hl-type    — scalar, vector, matrix and texture types
 //   hl-builtin — standard library functions
 //   hl-ident   — everything else (user identifiers)
-fn highlight_wgsl(src: &str) -> String {
+fn highlight_wgsl(src: &str, err_lines: &[usize]) -> String {
     let chars: Vec<char> = src.chars().collect();
     let len   = chars.len();
     let mut out   = String::with_capacity(src.len() * 3);
@@ -627,7 +633,19 @@ fn highlight_wgsl(src: &str) -> String {
         i += 1;
     }
 
-    out
+    //post-process: split by line and wrap error lines
+    if err_lines.is_empty() { return out; }
+    out.split('\n')
+        .enumerate()
+        .map(|(i, line)| {
+            if err_lines.contains(&(i + 1)) {
+                format!("<span class='hl-err-line'>{line}</span>")
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn main() {
@@ -650,8 +668,8 @@ fn App() -> Element {
     );
 
     // Recomputed reactively whenever src changes
-    let highlighted = use_memo(move || highlight_wgsl(&src.read()));
-
+    let highlighted = use_memo(move || highlight_wgsl(&src.read(), &parse_err_lines(&error.read())));
+    
     // Render coroutine
     use_coroutine(|_: UnboundedReceiver<()>| async move {
         let mut rx = RX_SLOT.with(|s| s.borrow_mut().take()).expect("RX_SLOT");
