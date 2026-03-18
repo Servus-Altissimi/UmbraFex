@@ -135,7 +135,7 @@ html, body {
   user-select: none;
 
   .gutter-line {
-    height: 19.5px; // must match textarea line-height exactly, a little too hacky tho
+    height: 19.5px; // must match textarea line-height exactly
     line-height: 19.5px;
     font-size: 12px;
     color: #555;
@@ -161,8 +161,7 @@ html, body {
   font-size: 13px;
   font-family: monospace;
   line-height: 1.5;
-  white-space: pre-wrap;
-  word-wrap: break-word;
+  white-space: pre;
   tab-size: 4;
 
   // loosely inspired by VSCode Dark
@@ -200,6 +199,7 @@ html, body {
   border: none;
   outline: none;
   tab-size: 4;
+  white-space: pre;
   overflow: auto;
   position: relative;
   z-index: 1;
