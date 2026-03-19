@@ -89,6 +89,9 @@ html, body {
 }
 
 #canvas-fixed {
+  position: fixed;
+  z-index: 1;
+  pointer-events: none;
   canvas {
     display: block;
     width: 100%;
@@ -328,4 +331,23 @@ html, body {
   overflow: auto;
   position: relative;
   z-index: 1;
+}
+
+.pane-no-webgpu {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    color: #aaa;
+
+    img { width: 120px; opacity: 0.6; }
+    p   { font-size: 0.9rem; }
+    a {
+        color: #bbb;
+        font-size: 0.9rem;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+        &:hover { color: #fff; }
+    }
 }

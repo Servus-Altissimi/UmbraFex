@@ -10,6 +10,7 @@ use crate::js;
 use crate::{ERR_RX, ERR_TX, PERF_RX, PERF_TX, RX_SLOT, TX_SLOT};
 
 const STYLE: Asset = asset!("assets/style.scss");
+const NO_WEBGPU: Asset = asset!("assets/nowebgpu.svg");
 const CANVAS_ID: &str = "canvas";
 
 pub const DEFAULT_SHADER: &str = r#"// Hecko (˶ᵔᗜᵔ˶)ﾉﾞ 
@@ -161,7 +162,8 @@ impl DockState {
 
 #[component]
 pub fn App() -> Element {
-    let mut src      = use_signal(|| DEFAULT_SHADER.to_string());
+    let mut webgpu_ok = use_signal(|| true);
+    let mut src       = use_signal(|| DEFAULT_SHADER.to_string());
     let mut error    = use_signal(|| String::new());
     let mut perf     = use_signal(PerfStats::default);
     let mut dock     = use_signal(DockState::new);
@@ -169,6 +171,16 @@ pub fn App() -> Element {
     let mut drag_ov:  Signal<Option<usize>>           = use_signal(|| None);
 
     let tx = use_hook(|| TX_SLOT.with(|s| s.borrow().as_ref().unwrap().clone()));
+
+    use_effect(move || {
+        spawn(async move {
+            if let Ok(val) = eval("navigator.gpu !== undefined").await {
+                if val.as_bool() == Some(false) {
+                    webgpu_ok.set(false);
+                }
+            }
+        });
+    });
 
     // Recomputed reactively whenever src changes
     let highlighted = use_memo(move || highlight_wgsl(&src.read(), &parse_err_lines(&error.read())));
@@ -248,11 +260,21 @@ pub fn App() -> Element {
     use_coroutine(move |_: UnboundedReceiver<()>| async move {
         let mut erx = ERR_RX.with(|s| s.borrow_mut().take()).expect("ERR_RX");
         loop {
-            if let Ok(msg) = erx.try_recv() { error.set(msg); }
+            if let Ok(msg) = erx.try_recv() {
+                // Fatal GPU initialisation errors (adapter/surface/device failures)
+                // mean WebGPU is not actually usable — flip the flag so the
+                // no-WebGPU pane renders instead of a silent blank canvas.
+                if msg.starts_with("Adapter:")
+                    || msg.starts_with("Surface:")
+                    || msg.starts_with("Device:")
+                {
+                    webgpu_ok.set(false);
+                }
+                error.set(msg);
+            }
             TimeoutFuture::new(100).await;
         }
     });
-
     // Performance stats poll coroutine
     use_coroutine(move |_: UnboundedReceiver<()>| async move {
         let mut prx = PERF_RX.with(|s| s.borrow_mut().take()).expect("PERF_RX");
@@ -311,7 +333,23 @@ pub fn App() -> Element {
                 div { key: "{pane:?}", style,
                     match pane {
                         PaneId::Canvas => rsx! {
-                            div { id: "canvas-slot", class: "pane-canvas" }
+                            if *webgpu_ok.read() {
+                                div { id: "canvas-slot", class: "pane-canvas" }
+                            } else {
+                                div { class: "pane-canvas pane-no-webgpu",
+                                    img { src: NO_WEBGPU, alt: "No WebGPU" }
+                                    p { "WebGPU isn't available in your browser." }
+                                    p {
+                                        "Enable it: "
+                                        a {
+                                            href: "https://enablegpu.com/",
+                                            target: "_blank",
+                                            "https://enablegpu.com/"
+                                        }
+                                    }
+                                }      
+                            }
+
                         },
                         PaneId::Editor => rsx! {
                             crate::components::editor::Editor {

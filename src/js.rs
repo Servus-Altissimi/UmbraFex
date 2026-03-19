@@ -51,6 +51,8 @@ pub const CANVAS_SYNC: &str = "
                 } else {
                     fixed.style.display = 'none';
                 }
+            } else if (fixed) {
+                fixed.style.display = 'none'; // slot gone (no-webgpu pane showing)
             }
             requestAnimationFrame(sync);
         })();
