@@ -62,3 +62,28 @@ pub const FS_TOGGLE: &str = "
     if (!document.fullscreenElement) w.requestFullscreen();
     else document.exitFullscreen();
 ";
+
+pub const LOAD_DOCK_STATE: &str = "
+    try {
+        const saved = localStorage.getItem('shader-dock-state');
+        saved || '';
+    } catch (e) {
+        '';
+    }
+";
+
+pub const ENABLE_BEFOREUNLOAD: &str = "
+    window.__beforeUnloadHandler = (e) => {
+        e.preventDefault();
+        e.returnValue = '';
+        return '';
+    };
+    window.addEventListener('beforeunload', window.__beforeUnloadHandler);
+";
+
+pub const DISABLE_BEFOREUNLOAD: &str = "
+    if (window.__beforeUnloadHandler) {
+        window.removeEventListener('beforeunload', window.__beforeUnloadHandler);
+        delete window.__beforeUnloadHandler;
+    }
+";

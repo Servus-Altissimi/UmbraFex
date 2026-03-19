@@ -113,10 +113,10 @@ pub enum PaneId { Canvas, Editor, Errors, Perf }
 impl PaneId {
     fn label(self) -> &'static str {
         match self {
-            Self::Canvas => "Canvas",
-            Self::Editor => "Editor",
-            Self::Errors => "Errors",
-            Self::Perf   => "Performance",
+            Self::Canvas  => "Canvas",
+            Self::Editor  => "Editor",
+            Self::Errors  => "Tools",
+            Self::Perf    => "Performance",
         }
     }
 }
@@ -131,13 +131,19 @@ struct DockState {
 impl DockState {
     fn new() -> Self {
         Self {
-            zones:  [vec![PaneId::Canvas], vec![PaneId::Errors, PaneId::Perf], vec![PaneId::Editor]],
+            zones:  [
+                vec![PaneId::Canvas], 
+                vec![PaneId::Errors, PaneId::Perf], 
+                vec![PaneId::Editor]
+            ],
             active: [0, 0, 0],
         }
     }
+    
     fn active_pane(&self, z: usize) -> Option<PaneId> {
         self.zones[z].get(self.active[z]).copied()
     }
+    
     fn move_pane(&mut self, pane: PaneId, from: usize, to: usize) {
         if from == to { return; }
         if let Some(pos) = self.zones[from].iter().position(|&p| p == pane) {
@@ -159,7 +165,6 @@ pub fn App() -> Element {
     let mut error    = use_signal(|| String::new());
     let mut perf     = use_signal(PerfStats::default);
     let mut dock     = use_signal(DockState::new);
- 
     let mut dragging: Signal<Option<(PaneId, usize)>> = use_signal(|| None);
     let mut drag_ov:  Signal<Option<usize>>           = use_signal(|| None);
 
@@ -167,6 +172,17 @@ pub fn App() -> Element {
 
     // Recomputed reactively whenever src changes
     let highlighted = use_memo(move || highlight_wgsl(&src.read(), &parse_err_lines(&error.read())));
+
+    use_effect(move || {
+        let current_src = src.read().clone();
+        let has_changes = current_src != DEFAULT_SHADER;
+        
+        if has_changes {
+            let _ = eval(js::ENABLE_BEFOREUNLOAD);
+        } else {
+            let _ = eval(js::DISABLE_BEFOREUNLOAD);
+        }
+    });
 
     // Render coroutine
     use_coroutine(|_: UnboundedReceiver<()>| async move {
@@ -254,16 +270,7 @@ pub fn App() -> Element {
         let _ = eval(js::CANVAS_SYNC); 
     });
 
-    let on_run = move |_| {
-        error.set(String::new());
-        let _ = tx.unbounded_send(src.read().clone());
-    };
-
-    let on_fullscreen = move |_| {
-        let _ = eval(js::FS_TOGGLE);
-    };
-
-    // builds tab Elements for one zone outside rsx
+    // Builds tab Elements for one zone outside rsx
     let make_tabs = move |idx: usize| -> Vec<Element> {
         let d        = dock.read();
         let panes    = d.zones[idx].clone();
@@ -287,8 +294,6 @@ pub fn App() -> Element {
     };
 
     // Builds one zone element (tab strip + active pane) by index.
-    // The Toolbar stays pinned outside the zone system so Run/Fullscreen are
-    // always reachable regardless of which zone the Editor is docked into.
     let zone = move |idx: usize, extra: &'static str| -> Element {
         let d        = dock.read();
         let panes    = d.zones[idx].clone();
@@ -300,12 +305,13 @@ pub fn App() -> Element {
         
         let contents: Vec<Element> = panes.into_iter().map(|pane| {
             let visible = Some(pane) == active_p;
-            let style   = if visible { "display:flex;flex:1 1 0;min-height:0;flex-direction:column;" } else { "display:none;" };
+            let style   = if visible { "display:flex;flex:1 1 0;min-height:0;flex-direction:column;" } else { "display:none;" }; 
+            let tx_clone = tx.clone();
             rsx! {
                 div { key: "{pane:?}", style,
                     match pane {
                         PaneId::Canvas => rsx! {
-                            div { id: "canvas-slot", class: "pane-canvas" } // redundant 
+                            div { id: "canvas-slot", class: "pane-canvas" }
                         },
                         PaneId::Editor => rsx! {
                             crate::components::editor::Editor {
@@ -315,7 +321,16 @@ pub fn App() -> Element {
                             }
                         },
                         PaneId::Errors => rsx! {
-                            crate::components::error_pane::ErrorPane { error: error.read().clone() }
+                            crate::components::error_pane::ErrorPane {
+                                error: error.read().clone(),
+                                on_run: move |_| {
+                                    error.set(String::new());
+                                    let _ = tx_clone.unbounded_send(src.read().clone());
+                                },
+                                on_fullscreen: move |_| {
+                                    let _ = eval(js::FS_TOGGLE);
+                                },
+                            }
                         },
                         PaneId::Perf => rsx! {
                             crate::components::perf_pane::PerfPane { stats: perf.read().clone() }
@@ -359,9 +374,8 @@ pub fn App() -> Element {
 
             div { class: "drag-h", onmousedown: move |_| { let _ = eval(js::DRAG_H); } }
 
-            // Right: toolbar pinned at top, then zone 2
+            // Right: zone 2
             div { class: "panel-right",
-                crate::components::toolbar::Toolbar { on_run, on_fullscreen }
                 { zone(2, "zone-grow") }
             }
         }
