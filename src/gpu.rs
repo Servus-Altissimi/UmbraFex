@@ -16,6 +16,17 @@ pub const QUAD: &[Vertex] = &[
     Vertex { pos: [ 1.0,  1.0] }, Vertex { pos: [-1.0,  1.0] },
 ];
 
+// Frame performance stats are sent from the render loop to the UI via PERF_TX.
+#[derive(Clone, Default, PartialEq)]
+pub struct PerfStats {
+    pub fps:      f32,
+    pub frame_ms: f32,
+    pub w:        u32,
+    pub h:        u32,
+    pub gpu_name: String,
+    pub backend:  String,
+}
+
 pub struct Gpu {
     pub surface:    wgpu::Surface<'static>,
     pub device:     wgpu::Device,
@@ -28,7 +39,9 @@ pub struct Gpu {
     pub config:     wgpu::SurfaceConfiguration,
     pub format:     wgpu::TextureFormat,
     pub start:      f64,
-    pub canvas:     web_sys::HtmlCanvasElement,
+    pub canvas:     web_sys::HtmlCanvasElement, 
+    pub gpu_name:   String,
+    pub backend:    String,
 }
 
 impl Gpu {
@@ -66,6 +79,11 @@ impl Gpu {
             })
             .await
             .map_err(|e| format!("Device: {e}"))?;
+
+        // Readable adapter info for the performance pane
+        let info     = adapter.get_info();
+        let gpu_name = info.name.clone();
+        let backend  = format!("{:?}", info.backend);
 
         let caps   = surface.get_capabilities(&adapter);
         let format = caps.formats.first().copied().ok_or("No surface formats")?;
@@ -111,7 +129,7 @@ impl Gpu {
         let start    = web_sys::window().unwrap().performance().unwrap().now();
 
         Ok(Gpu { surface, device, queue, pipeline, vtx_buf, uni_buf,
-                  bind_group, bgl, config, format, start, canvas })
+                  bind_group, bgl, config, format, start, canvas, gpu_name, backend })
     }
 
     pub fn maybe_resize(&mut self) {
@@ -197,7 +215,8 @@ pub async fn build_pipeline(
         .collect();
 
     // Pop error scope via the handle returned by push_error_scope
-    let _ = scope.pop().await;    if !errors.is_empty() {
+    let _ = scope.pop().await;
+    if !errors.is_empty() {
         return Err(errors.join("\n"));
     }
 

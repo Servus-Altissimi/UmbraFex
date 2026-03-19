@@ -4,16 +4,12 @@ use futures_channel::mpsc::UnboundedReceiver;
 use gloo_timers::future::TimeoutFuture;
 use wasm_bindgen::JsCast;
 
-use crate::gpu::Gpu;
+use crate::gpu::{Gpu, PerfStats};
 use crate::highlight::{highlight_wgsl, parse_err_lines};
 use crate::js;
-use crate::{ERR_RX, ERR_TX, RX_SLOT, TX_SLOT};
-use crate::components::editor::Editor;
-use crate::components::error_pane::ErrorPane;
-use crate::components::toolbar::Toolbar;
+use crate::{ERR_RX, ERR_TX, PERF_RX, PERF_TX, RX_SLOT, TX_SLOT};
 
 const STYLE: Asset = asset!("assets/style.scss");
-
 const CANVAS_ID: &str = "canvas";
 
 pub const DEFAULT_SHADER: &str = r#"// Hecko (˶ᵔᗜᵔ˶)ﾉﾞ 
@@ -110,14 +106,64 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     return vec4<f32>(PASTEL_CREAM, 1.0);
 }"#;
 
+// Pane identifier, each value is one dockable panel
+#[derive(Clone, PartialEq, Debug, Copy)]
+pub enum PaneId { Canvas, Editor, Errors, Perf }
+
+impl PaneId {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Canvas => "Canvas",
+            Self::Editor => "Editor",
+            Self::Errors => "Errors",
+            Self::Perf   => "Performance",
+        }
+    }
+}
+
+// Each zone holds an ordered list of panes and tracks which tab is active.
+#[derive(Clone)]
+struct DockState {
+    zones:  [Vec<PaneId>; 3],
+    active: [usize; 3],
+}
+
+impl DockState {
+    fn new() -> Self {
+        Self {
+            zones:  [vec![PaneId::Canvas], vec![PaneId::Errors, PaneId::Perf], vec![PaneId::Editor]],
+            active: [0, 0, 0],
+        }
+    }
+    fn active_pane(&self, z: usize) -> Option<PaneId> {
+        self.zones[z].get(self.active[z]).copied()
+    }
+    fn move_pane(&mut self, pane: PaneId, from: usize, to: usize) {
+        if from == to { return; }
+        if let Some(pos) = self.zones[from].iter().position(|&p| p == pane) {
+            self.zones[from].remove(pos);
+            if self.active[from] >= self.zones[from].len() && !self.zones[from].is_empty() {
+                self.active[from] = self.zones[from].len() - 1;
+            }
+        }
+        if !self.zones[to].contains(&pane) {
+            self.zones[to].push(pane);
+            self.active[to] = self.zones[to].len() - 1;
+        }
+    }
+}
+
 #[component]
 pub fn App() -> Element {
-    let mut src   = use_signal(|| DEFAULT_SHADER.to_string());
-    let mut error = use_signal(|| String::new());
+    let mut src      = use_signal(|| DEFAULT_SHADER.to_string());
+    let mut error    = use_signal(|| String::new());
+    let mut perf     = use_signal(PerfStats::default);
+    let mut dock     = use_signal(DockState::new);
+ 
+    let mut dragging: Signal<Option<(PaneId, usize)>> = use_signal(|| None);
+    let mut drag_ov:  Signal<Option<usize>>           = use_signal(|| None);
 
-    let tx = use_hook(||
-        TX_SLOT.with(|s| s.borrow().as_ref().unwrap().clone())
-    );
+    let tx = use_hook(|| TX_SLOT.with(|s| s.borrow().as_ref().unwrap().clone()));
 
     // Recomputed reactively whenever src changes
     let highlighted = use_memo(move || highlight_wgsl(&src.read(), &parse_err_lines(&error.read())));
@@ -144,14 +190,40 @@ pub fn App() -> Element {
             }
         };
 
-        loop { 
-            while let Ok(src) = rx.try_recv() {
-                let res = gpu.rebuild(&src).await;
+        // Rolling 60 sample window for FPS, push stats every 20 frames
+        let perf_obj = web_sys::window().unwrap().performance().unwrap();
+        let mut ftimes: std::collections::VecDeque<f64> = std::collections::VecDeque::with_capacity(60);
+        let mut last = perf_obj.now();
+        let mut tick = 0u32;
+
+        loop {
+            while let Ok(s) = rx.try_recv() {
+                let res = gpu.rebuild(&s).await;
                 ERR_TX.with(|s| { s.borrow().as_ref().map(|t| {
                     let _ = t.unbounded_send(res.err().unwrap_or_default());
                 }); });
             }
             gpu.render();
+
+            let now = perf_obj.now();
+            ftimes.push_back(now - last);
+            last = now;
+            if ftimes.len() > 60 { ftimes.pop_front(); }
+            tick += 1;
+            if tick % 20 == 0 {
+                let avg = ftimes.iter().sum::<f64>() / ftimes.len() as f64;
+                PERF_TX.with(|s| { s.borrow().as_ref().map(|t| {
+                    let _ = t.unbounded_send(PerfStats {
+                        fps:      (1000.0 / avg) as f32,
+                        frame_ms: avg as f32,
+                        w:        gpu.config.width,
+                        h:        gpu.config.height,
+                        gpu_name: gpu.gpu_name.clone(),
+                        backend:  gpu.backend.clone(),
+                    });
+                }); });
+            }
+
             TimeoutFuture::new(16).await;
         }
     });
@@ -165,47 +237,132 @@ pub fn App() -> Element {
         }
     });
 
+    // Performance stats poll coroutine
+    use_coroutine(move |_: UnboundedReceiver<()>| async move {
+        let mut prx = PERF_RX.with(|s| s.borrow_mut().take()).expect("PERF_RX");
+        loop {
+            if let Ok(s) = prx.try_recv() { perf.set(s); }
+            TimeoutFuture::new(200).await;
+        }
+    });
+
+    // Start a RAF loop, runs once, that continuously
+    // mirrors #canvas-slot's bounding rect onto #canvas-fixed. This keeps the
+    // real canvas overlay perfectly in sync without ever touching the DOM node
+    // that wgpu holds a surface reference to.
+    use_effect(move || {
+        let _ = eval(js::CANVAS_SYNC); 
+    });
+
     let on_run = move |_| {
         error.set(String::new());
         let _ = tx.unbounded_send(src.read().clone());
     };
 
     let on_fullscreen = move |_| {
-        let _ = eval(r#"
-            const w = document.getElementById('canvas-wrap');
-            if (!document.fullscreenElement) w.requestFullscreen();
-            else document.exitFullscreen();
-        "#);
+        let _ = eval(js::FS_TOGGLE);
+    };
+
+    // builds tab Elements for one zone outside rsx
+    let make_tabs = move |idx: usize| -> Vec<Element> {
+        let d        = dock.read();
+        let panes    = d.zones[idx].clone();
+        let active_i = d.active[idx];
+        drop(d);
+        panes.into_iter().enumerate().map(|(i, pane)| {
+            let cls = if i == active_i { "zone-tab zone-tab-active" } else { "zone-tab" };
+            rsx! {
+                div {
+                    key: "{pane:?}",
+                    class: cls,
+                    draggable: true,
+                    ondragstart: move |_| { dragging.set(Some((pane, idx))); },
+                    // ondragend active even when dropped outside any zone
+                    ondragend:   move |_| { dragging.set(None); drag_ov.set(None); },
+                    onclick:     move |_| { dock.write().active[idx] = i; },
+                    "{pane.label()}"
+                }
+            }
+        }).collect()
+    };
+
+    // Builds one zone element (tab strip + active pane) by index.
+    // The Toolbar stays pinned outside the zone system so Run/Fullscreen are
+    // always reachable regardless of which zone the Editor is docked into.
+    let zone = move |idx: usize, extra: &'static str| -> Element {
+        let d        = dock.read();
+        let panes    = d.zones[idx].clone();
+        let active_p = d.active_pane(idx);
+        drop(d);
+        let is_over = drag_ov.read().map_or(false, |z| z == idx);
+        let cls     = format!("zone {extra}{}", if is_over { " zone-drop" } else { "" });
+        let tabs    = make_tabs(idx);
+        
+        let contents: Vec<Element> = panes.into_iter().map(|pane| {
+            let visible = Some(pane) == active_p;
+            let style   = if visible { "display:flex;flex:1 1 0;min-height:0;flex-direction:column;" } else { "display:none;" };
+            rsx! {
+                div { key: "{pane:?}", style,
+                    match pane {
+                        PaneId::Canvas => rsx! {
+                            div { id: "canvas-slot", class: "pane-canvas" } // redundant 
+                        },
+                        PaneId::Editor => rsx! {
+                            crate::components::editor::Editor {
+                                src: src.read().clone(),
+                                highlighted: highlighted.read().clone(),
+                                on_input: move |v| src.set(v),
+                            }
+                        },
+                        PaneId::Errors => rsx! {
+                            crate::components::error_pane::ErrorPane { error: error.read().clone() }
+                        },
+                        PaneId::Perf => rsx! {
+                            crate::components::perf_pane::PerfPane { stats: perf.read().clone() }
+                        },
+                    }
+                }
+            }
+        }).collect();
+
+        rsx! {
+            div {
+                class: cls, 
+                ondragover: move |e| { e.prevent_default(); drag_ov.set(Some(idx)); },
+                ondrop: move |e| {
+                    e.prevent_default();
+                    if let Some((pane, from)) = *dragging.read() {
+                        dock.write().move_pane(pane, from, idx);
+                    }
+                    dragging.set(None);
+                    drag_ov.set(None);
+                },
+                div { class: "zone-tabs", { tabs.into_iter() } }
+                div { class: "zone-content", { contents.into_iter() } }
+            }
+        }
     };
 
     rsx! {
         document::Stylesheet { href: STYLE }
+        // Canvas lives here permanently at the root, outside Dioxus's zonetree.
+        // The RAF loop in use_effect positions this over #canvas-slot so it appears
+        // in the right place, but is never unmounted or reparented by Dioxus.
+        div { id: "canvas-fixed", canvas { id: CANVAS_ID } }
         div { class: "root",
-            // Left: canvas + errors
+            // Left: two zones stacked vertically
             div { class: "panel-left",
-                div { id: "canvas-wrap", class: "pane-canvas",
-                    canvas { id: CANVAS_ID }
-                }
-                div {
-                    class: "drag-v",
-                    onmousedown: move |_| { let _ = eval(js::DRAG_V); }
-                }
-                ErrorPane { error: error.read().clone() }
+                { zone(0, "zone-grow") }
+                div { class: "drag-v", onmousedown: move |_| { let _ = eval(js::DRAG_V); } }
+                { zone(1, "zone-bottom") }
             }
 
-            div {
-                class: "drag-h",
-                onmousedown: move |_| { let _ = eval(js::DRAG_H); }
-            }
+            div { class: "drag-h", onmousedown: move |_| { let _ = eval(js::DRAG_H); } }
 
-            // Right: editor
+            // Right: toolbar pinned at top, then zone 2
             div { class: "panel-right",
-                Toolbar { on_run, on_fullscreen }
-                Editor {
-                    src: src.read().clone(),
-                    highlighted: highlighted.read().clone(),
-                    on_input: move |v| src.set(v),
-                }
+                crate::components::toolbar::Toolbar { on_run, on_fullscreen }
+                { zone(2, "zone-grow") }
             }
         }
     }

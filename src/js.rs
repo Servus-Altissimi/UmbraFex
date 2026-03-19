@@ -1,5 +1,5 @@
 pub const DRAG_V: &str = "(function(){
-    const p = document.querySelector('.pane-errors');
+    const p = document.querySelector('.zone-bottom');
     let y0 = event.clientY, h0 = p.getBoundingClientRect().height;
     const mm = e => p.style.height = Math.max(24, h0 - (e.clientY - y0)) + 'px';
     const mu = () => {
@@ -31,4 +31,34 @@ pub const SYNC_SCROLL: &str = "
     const ov = document.querySelector('.highlight-overlay');
     g.scrollTop = ta.scrollTop;
     if (ov) { ov.scrollTop = ta.scrollTop; ov.scrollLeft = ta.scrollLeft; }
+";
+
+pub const CANVAS_SYNC: &str = "
+    if (!window.__canvasSyncRunning) {
+        window.__canvasSyncRunning = true;
+        (function sync() {
+            const slot  = document.getElementById('canvas-slot');
+            const fixed = document.getElementById('canvas-fixed');
+            if (slot && fixed) {
+                const r = slot.getBoundingClientRect();
+                if (r.width > 0 && r.height > 0) {
+                    fixed.style.cssText =
+                        'position:fixed;overflow:hidden;background:#000;z-index:1;' +
+                        'left:'   + r.left   + 'px;' +
+                        'top:'    + r.top    + 'px;' +
+                        'width:'  + r.width  + 'px;' +
+                        'height:' + r.height + 'px;';
+                } else {
+                    fixed.style.display = 'none';
+                }
+            }
+            requestAnimationFrame(sync);
+        })();
+    }
+";
+
+pub const FS_TOGGLE: &str = "
+    const w = document.getElementById('canvas-fixed');
+    if (!document.fullscreenElement) w.requestFullscreen();
+    else document.exitFullscreen();
 ";
