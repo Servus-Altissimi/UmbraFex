@@ -24,7 +24,7 @@ mod components;
 
 use std::cell::RefCell;
 use futures_channel::mpsc::{self, UnboundedReceiver, UnboundedSender};
-use crate::gpu::PerfStats;
+use crate::gpu::{PerfStats, TimelineCmd}; // CLAUDE: added TimelineCmd
 
 // TX_SLOT / RX_SLOT form a one-shot channel used to hand the shader
 // source from the Dioxus component tree (which owns the editor state) down
@@ -38,24 +38,34 @@ use crate::gpu::PerfStats;
 // sends compilation errors (or an empty string on success) back up so the
 // component can display them in the error pane without any shared mutable
 // state visible to the component layer.
+
+// TIMELINE_TX / TIMELINE_RX carry TimelineCmd values from the UI
+// to the render coroutine, letting the component tree control playback and
+// seek position without any shared mutable state.
+//
 thread_local! {
-    static TX_SLOT: RefCell<Option<UnboundedSender<String>>>      = RefCell::new(None);
-    static RX_SLOT: RefCell<Option<UnboundedReceiver<String>>>    = RefCell::new(None);
-    static ERR_TX:  RefCell<Option<UnboundedSender<String>>>      = RefCell::new(None);
-    static ERR_RX:  RefCell<Option<UnboundedReceiver<String>>>    = RefCell::new(None); 
-    static PERF_TX: RefCell<Option<UnboundedSender<PerfStats>>>   = RefCell::new(None);
-    static PERF_RX: RefCell<Option<UnboundedReceiver<PerfStats>>> = RefCell::new(None);
+    static TX_SLOT:      RefCell<Option<UnboundedSender<String>>>        = RefCell::new(None);
+    static RX_SLOT:      RefCell<Option<UnboundedReceiver<String>>>      = RefCell::new(None);
+    static ERR_TX:       RefCell<Option<UnboundedSender<String>>>        = RefCell::new(None);
+    static ERR_RX:       RefCell<Option<UnboundedReceiver<String>>>      = RefCell::new(None); 
+    static PERF_TX:      RefCell<Option<UnboundedSender<PerfStats>>>     = RefCell::new(None);
+    static PERF_RX:      RefCell<Option<UnboundedReceiver<PerfStats>>>   = RefCell::new(None); 
+    static TIMELINE_TX:  RefCell<Option<UnboundedSender<TimelineCmd>>>   = RefCell::new(None);
+    static TIMELINE_RX:  RefCell<Option<UnboundedReceiver<TimelineCmd>>> = RefCell::new(None);
 }
 
 fn main() {
     let (tx,  rx)  = mpsc::unbounded::<String>();
     let (etx, erx) = mpsc::unbounded::<String>();
     let (ptx, prx) = mpsc::unbounded::<PerfStats>();
-    TX_SLOT.with(|s| *s.borrow_mut() = Some(tx));
-    RX_SLOT.with(|s| *s.borrow_mut() = Some(rx));
-    ERR_TX.with(|s|  *s.borrow_mut() = Some(etx));
-    ERR_RX.with(|s|  *s.borrow_mut() = Some(erx));
-    PERF_TX.with(|s| *s.borrow_mut() = Some(ptx));
-    PERF_RX.with(|s| *s.borrow_mut() = Some(prx));
+    let (ttx, trx) = mpsc::unbounded::<TimelineCmd>();
+    TX_SLOT.with(|s|     *s.borrow_mut() = Some(tx));
+    RX_SLOT.with(|s|     *s.borrow_mut() = Some(rx));
+    ERR_TX.with(|s|      *s.borrow_mut() = Some(etx));
+    ERR_RX.with(|s|      *s.borrow_mut() = Some(erx));
+    PERF_TX.with(|s|     *s.borrow_mut() = Some(ptx));
+    PERF_RX.with(|s|     *s.borrow_mut() = Some(prx));
+    TIMELINE_TX.with(|s| *s.borrow_mut() = Some(ttx));
+    TIMELINE_RX.with(|s| *s.borrow_mut() = Some(trx));
     dioxus::launch(app::App);
 }

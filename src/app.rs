@@ -4,10 +4,11 @@ use futures_channel::mpsc::UnboundedReceiver;
 use gloo_timers::future::TimeoutFuture;
 use wasm_bindgen::JsCast;
 
-use crate::gpu::{Gpu, PerfStats};
+use crate::gpu::{Gpu, PerfStats, TimelineCmd};
 use crate::highlight::{highlight_wgsl, parse_err_lines};
 use crate::js;
-use crate::{ERR_RX, ERR_TX, PERF_RX, PERF_TX, RX_SLOT, TX_SLOT};
+
+use crate::{ERR_RX, ERR_TX, PERF_RX, PERF_TX, RX_SLOT, TX_SLOT, TIMELINE_RX, TIMELINE_TX};
 
 const STYLE: Asset = asset!("assets/style.scss");
 const NO_WEBGPU: Asset = asset!("assets/nowebgpu.svg");
@@ -109,15 +110,23 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
 
 // Pane identifier, each value is one dockable panel
 #[derive(Clone, PartialEq, Debug, Copy)]
-pub enum PaneId { Canvas, Editor, Errors, Perf }
+pub enum PaneId {
+    Canvas,
+    Editor,
+    Errors,
+    Perf,
+
+    Timeline,
+}
 
 impl PaneId {
     fn label(self) -> &'static str {
         match self {
-            Self::Canvas  => "Canvas",
-            Self::Editor  => "Editor",
-            Self::Errors  => "Tools",
-            Self::Perf    => "Performance",
+            Self::Canvas   => "Canvas",
+            Self::Editor   => "Editor",
+            Self::Errors   => "Tools",
+            Self::Perf     => "Performance",
+            Self::Timeline => "Timeline",
         }
     }
 }
@@ -158,6 +167,18 @@ impl DockState {
             self.active[to] = self.zones[to].len() - 1;
         }
     }
+
+    // Remove a pane from whichever zone contains it, adjusting active indices.
+    fn remove_pane(&mut self, pane: PaneId) {
+        for z in 0..3 {
+            if let Some(pos) = self.zones[z].iter().position(|&p| p == pane) {
+                self.zones[z].remove(pos);
+                if !self.zones[z].is_empty() && self.active[z] >= self.zones[z].len() {
+                    self.active[z] = self.zones[z].len() - 1;
+                }
+            }
+        }
+    }
 }
 
 #[component]
@@ -169,8 +190,17 @@ pub fn App() -> Element {
     let mut dock     = use_signal(DockState::new);
     let mut dragging: Signal<Option<(PaneId, usize)>> = use_signal(|| None);
     let mut drag_ov:  Signal<Option<usize>>           = use_signal(|| None);
+ 
+    let mut tl_enabled:     Signal<bool> = use_signal(|| false);
+    let mut tl_duration:    Signal<f32>  = use_signal(|| 10.0f32);
+    let mut tl_playing:     Signal<bool> = use_signal(|| false);
 
-    let tx = use_hook(|| TX_SLOT.with(|s| s.borrow().as_ref().unwrap().clone()));
+    // Display position is updated immediately on scrub (for instant feedback)
+    // and also fed back by the render coroutine via PerfStats for smooth playback display.
+    let mut tl_display_pos: Signal<f32>  = use_signal(|| 0.0f32);
+
+    let tx          = use_hook(|| TX_SLOT.with(|s| s.borrow().as_ref().unwrap().clone()));
+    let timeline_tx = use_hook(|| TIMELINE_TX.with(|s| s.borrow().as_ref().unwrap().clone()));
 
     use_effect(move || {
         spawn(async move {
@@ -196,9 +226,23 @@ pub fn App() -> Element {
         }
     });
 
+    let tl_sync_tx = timeline_tx.clone();
+    use_effect(move || {
+        let enabled  = *tl_enabled.read();
+        let duration = *tl_duration.read();
+        let playing  = *tl_playing.read();
+        let _ = tl_sync_tx.unbounded_send(TimelineCmd {
+            enabled,
+            duration,
+            playing,
+            seek_to: None, // not a seek, just a state sync
+        });
+    });
+
     // Render coroutine
     use_coroutine(|_: UnboundedReceiver<()>| async move {
-        let mut rx = RX_SLOT.with(|s| s.borrow_mut().take()).expect("RX_SLOT");
+        let mut rx = RX_SLOT.with(|s| s.borrow_mut().take()).expect("RX_SLOT"); 
+        let mut timeline_rx = TIMELINE_RX.with(|s| s.borrow_mut().take()).expect("TIMELINE_RX");
 
         let canvas = loop {
             TimeoutFuture::new(50).await;
@@ -218,36 +262,63 @@ pub fn App() -> Element {
             }
         };
 
-        // Rolling 60 sample window for FPS, push stats every 20 frames
+        // Rolling 60 sample window for FPS, push stats every 5 frames
         let perf_obj = web_sys::window().unwrap().performance().unwrap();
         let mut ftimes: std::collections::VecDeque<f64> = std::collections::VecDeque::with_capacity(60);
         let mut last = perf_obj.now();
         let mut tick = 0u32;
+ 
+        let mut tl_enabled  = false;
+        let mut tl_duration = 10.0f32;
+        let mut tl_pos      = 0.0f32;
+        let mut tl_playing  = false;
 
         loop {
+            while let Ok(cmd) = timeline_rx.try_recv() {
+                tl_enabled  = cmd.enabled;
+                tl_duration = cmd.duration.max(0.1);
+                tl_playing  = cmd.playing;
+                if let Some(pos) = cmd.seek_to {
+                    tl_pos = pos.clamp(0.0, tl_duration);
+                }
+            }
+
             while let Ok(s) = rx.try_recv() {
                 let res = gpu.rebuild(&s).await;
                 ERR_TX.with(|s| { s.borrow().as_ref().map(|t| {
                     let _ = t.unbounded_send(res.err().unwrap_or_default());
                 }); });
             }
-            gpu.render();
 
-            let now = perf_obj.now();
-            ftimes.push_back(now - last);
+            // Compute frame delta for both FPS tracking and timeline advancement
+            let now      = perf_obj.now();
+            let delta_ms = now - last;
             last = now;
+
+            // Advance the timeline position by the real elapsed frame time,
+            // then wrap around so the animation loops seamlessly.
+            if tl_enabled && tl_playing && tl_duration > 0.0 {
+                let delta_s = (delta_ms / 1000.0) as f32;
+                tl_pos = (tl_pos + delta_s) % tl_duration;
+            }
+ 
+            gpu.render(if tl_enabled { Some(tl_pos) } else { None });
+
+            ftimes.push_back(delta_ms);
             if ftimes.len() > 60 { ftimes.pop_front(); }
             tick += 1;
-            if tick % 20 == 0 {
+
+            if tick % 5 == 0 {
                 let avg = ftimes.iter().sum::<f64>() / ftimes.len() as f64;
                 PERF_TX.with(|s| { s.borrow().as_ref().map(|t| {
                     let _ = t.unbounded_send(PerfStats {
-                        fps:      (1000.0 / avg) as f32,
-                        frame_ms: avg as f32,
-                        w:        gpu.config.width,
-                        h:        gpu.config.height,
-                        gpu_name: gpu.gpu_name.clone(),
-                        backend:  gpu.backend.clone(),
+                        fps:          (1000.0 / avg) as f32,
+                        frame_ms:     avg as f32,
+                        w:            gpu.config.width,
+                        h:            gpu.config.height,
+                        gpu_name:     gpu.gpu_name.clone(),
+                        backend:      gpu.backend.clone(),
+                        timeline_pos: tl_pos,
                     });
                 }); });
             }
@@ -262,7 +333,7 @@ pub fn App() -> Element {
         loop {
             if let Ok(msg) = erx.try_recv() {
                 // Fatal GPU initialisation errors (adapter/surface/device failures)
-                // mean WebGPU is not actually usable — flip the flag so the
+                // mean WebGPU is not actually usable: flip the flag so the
                 // no-WebGPU pane renders instead of a silent blank canvas.
                 if msg.starts_with("Adapter:")
                     || msg.starts_with("Surface:")
@@ -275,12 +346,16 @@ pub fn App() -> Element {
             TimeoutFuture::new(100).await;
         }
     });
+
     // Performance stats poll coroutine
     use_coroutine(move |_: UnboundedReceiver<()>| async move {
         let mut prx = PERF_RX.with(|s| s.borrow_mut().take()).expect("PERF_RX");
         loop {
-            if let Ok(s) = prx.try_recv() { perf.set(s); }
-            TimeoutFuture::new(200).await;
+            if let Ok(s) = prx.try_recv() {
+                tl_display_pos.set(s.timeline_pos);
+                perf.set(s);
+            } 
+            TimeoutFuture::new(50).await; // Magic number, smooth
         }
     });
 
@@ -360,18 +435,61 @@ pub fn App() -> Element {
                         },
                         PaneId::Errors => rsx! {
                             crate::components::error_pane::ErrorPane {
-                                error: error.read().clone(),
+                                error:              error.read().clone(),
+                                timeline_enabled:   *tl_enabled.read(),
                                 on_run: move |_| {
                                     error.set(String::new());
                                     let _ = tx_clone.unbounded_send(src.read().clone());
                                 },
                                 on_fullscreen: move |_| {
                                     let _ = eval(js::FS_TOGGLE);
+                                }, 
+                                on_timeline_toggle: move |_| { // Toggle timeline
+                                    let new_enabled = !*tl_enabled.read();
+                                    tl_enabled.set(new_enabled);
+                                    if new_enabled {
+                                        // Add Timeline tab to zone 1 if absent, then focus it
+                                        let mut d = dock.write();
+                                        if !d.zones[1].contains(&PaneId::Timeline) {
+                                            d.zones[1].push(PaneId::Timeline);
+                                        }
+                                        let idx = d.zones[1]
+                                            .iter()
+                                            .position(|&p| p == PaneId::Timeline)
+                                            .unwrap_or(0);
+                                        d.active[1] = idx;
+                                    } else { 
+                                        tl_playing.set(false);
+                                        let mut d = dock.write();
+                                        d.remove_pane(PaneId::Timeline);
+                                    }
                                 },
                             }
                         },
                         PaneId::Perf => rsx! {
                             crate::components::perf_pane::PerfPane { stats: perf.read().clone() }
+                        },
+
+                        PaneId::Timeline => { 
+                            let tl_seek_tx = timeline_tx.clone();
+                            rsx! {
+                                crate::components::timeline_pane::TimelinePane {
+                                    duration:  *tl_duration.read(),
+                                    position:  *tl_display_pos.read(),
+                                    playing:   *tl_playing.read(),
+                                    on_duration_change: move |v: f32| tl_duration.set(v), 
+                                    on_seek: move |pos: f32| {
+                                        tl_display_pos.set(pos);
+                                        let _ = tl_seek_tx.unbounded_send(TimelineCmd {
+                                            enabled:  *tl_enabled.read(),
+                                            duration: *tl_duration.read(),
+                                            playing:  *tl_playing.read(),
+                                            seek_to:  Some(pos),
+                                        });
+                                    },
+                                    on_play_pause: move |playing: bool| tl_playing.set(playing),
+                                }
+                            }
                         },
                     }
                 }

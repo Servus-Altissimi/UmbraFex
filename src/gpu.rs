@@ -19,12 +19,21 @@ pub const QUAD: &[Vertex] = &[
 // Frame performance stats are sent from the render loop to the UI via PERF_TX.
 #[derive(Clone, Default, PartialEq)]
 pub struct PerfStats {
-    pub fps:      f32,
-    pub frame_ms: f32,
-    pub w:        u32,
-    pub h:        u32,
-    pub gpu_name: String,
-    pub backend:  String,
+    pub fps:          f32,
+    pub frame_ms:     f32,
+    pub w:            u32,
+    pub h:            u32,
+    pub gpu_name:     String,
+    pub backend:      String,
+    pub timeline_pos: f32,
+}
+
+#[derive(Clone)]
+pub struct TimelineCmd {
+    pub enabled:  bool,
+    pub duration: f32,
+    pub playing:  bool, 
+    pub seek_to:  Option<f32>,
 }
 
 pub struct Gpu {
@@ -149,10 +158,14 @@ impl Gpu {
         Ok(())
     }
 
-    pub fn render(&mut self) {
+    pub fn render(&mut self, time_override: Option<f32>) {
         self.maybe_resize();
 
-        let t = ((web_sys::window().unwrap().performance().unwrap().now() - self.start) / 1000.0) as f32;
+        // If time override, use it, else fall back to wall clock elapsed time
+        let t = time_override.unwrap_or_else(|| {
+            ((web_sys::window().unwrap().performance().unwrap().now() - self.start) / 1000.0) as f32
+        });
+
         let u = Uniforms {
             resolution: [self.config.width as f32, self.config.height as f32],
             time: t, _pad: 0.0,
