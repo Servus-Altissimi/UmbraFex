@@ -2,8 +2,9 @@
 
 **A WebGPU-powered WGSL shader editor that runs entirely in the browser.** 
 
-  [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-  [![Rust](https://img.shields.io/badge/rust-1.89+-orange.svg)](https://www.rust-lang.org/)
+[![License](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.89+-orange?style=for-the-badge)](https://www.rust-lang.org/)
+
 
 [//]:<img width="1870" height="916" alt="image" src="https://github.com/user-attachments/assets/03129092-2291-4d32-bb2d-ccb70d1f90f4" />
 
