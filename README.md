@@ -1,9 +1,17 @@
-# UmbraFex
 
-**A WebGPU-powered WGSL shader editor that runs entirely in the browser.** 
+<div align="center">
+  <table border="0" cellspacing="0" cellpadding="0">
+    <tr>
+      <td><img src="https://files.catbox.moe/b4ex42.svg" alt="UmbraFex Logo" height="72" /></td>
+      <td><h1>&nbsp;UmbraFex</h1></td>
+    </tr>
+  </table>
+  <p><em>A WebGPU-powered WGSL shader editor that runs entirely in the browser.</em></p>
 
-[![License](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.89+-orange?style=for-the-badge)](https://www.rust-lang.org/)
+  [![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](LICENSE)
+  [![Rust](https://img.shields.io/badge/rust-1.89+-orange?style=for-the-badge)](https://www.rust-lang.org/)
+
+</div>
 
 
 [//]:<img width="1870" height="916" alt="image" src="https://github.com/user-attachments/assets/03129092-2291-4d32-bb2d-ccb70d1f90f4" />
